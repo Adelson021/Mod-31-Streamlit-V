@@ -103,23 +103,22 @@ def main():
         df_RFV['V_quartil'] = df_RFV['Valor'].apply(freq_val_class, args=('Valor', quartis))
         df_RFV['RFV_Score'] = df_RFV['R_quartil'] + df_RFV['F_quartil'] + df_RFV['V_quartil']
 
-        # Escolha da Quantidade de Clusters
-        st.sidebar.header("🔢 Configuração de Clusterização")
-        n_clusters = st.sidebar.slider(
-            "Escolha a quantidade de clusters",
-            min_value=2,
-            max_value=10,
-            value=4,
-            step=1
-        )
-
         # Clusterização
         scaler = StandardScaler()
         rfv_scaled = scaler.fit_transform(df_RFV[['Recencia', 'Frequencia', 'Valor']])
+        n_clusters = 4
         kmeans = KMeans(n_clusters=n_clusters, random_state=42)
         df_RFV['Cluster'] = kmeans.fit_predict(rfv_scaled)
 
         # Descrição dos Clusters
+        cluster_descriptions = {
+            0: 'Clientes mais frequentes e com alto gasto, mas com recência moderada.',
+            1: 'Clientes com pouca frequência, alto gasto e alta recência.',
+            2: 'Clientes de baixo gasto, com alta recência.',
+            3: 'Clientes com baixo gasto e baixa frequência.'
+        }
+        df_RFV['Descrição_Cluster'] = df_RFV['Cluster'].map(cluster_descriptions)
+
         st.subheader("📋 Tabela RFV com Clusterização")
         st.dataframe(df_RFV.head())
 
@@ -137,7 +136,7 @@ def main():
             )
         plt.xlabel('Recência (Normalizada)')
         plt.ylabel('Frequência (Normalizada)')
-        plt.title(f'Clusters RFV ({n_clusters} grupos)')
+        plt.title('Clusters RFV')
         plt.legend()
         st.pyplot(plt)
 
@@ -150,3 +149,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
