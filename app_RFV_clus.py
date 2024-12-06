@@ -2,20 +2,21 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+import seaborn as sns
 import matplotlib.pyplot as plt
 from io import BytesIO
 
 # Configuração inicial da página
 st.set_page_config(
-    page_title='RFV - Segmentação de Clientes',
+    page_title='RFV - Segmentação com Clusters',
     layout="wide",
     initial_sidebar_state='expanded'
 )
 
-# Funções de Cache
+# Funções auxiliares
 @st.cache_data
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8')
@@ -28,82 +29,30 @@ def to_excel(df):
     writer.close()
     return output.getvalue()
 
-# Funções para Classificação
-def recencia_class(x, r, q_dict):
-    if x <= q_dict[r][0.25]:
-        return 'A'
-    elif x <= q_dict[r][0.50]:
-        return 'B'
-    elif x <= q_dict[r][0.75]:
-        return 'C'
-    else:
-        return 'D'
-
-def freq_val_class(x, fv, q_dict):
-    if x <= q_dict[fv][0.25]:
-        return 'D'
-    elif x <= q_dict[fv][0.50]:
-        return 'C'
-    elif x <= q_dict[fv][0.75]:
-        return 'B'
-    else:
-        return 'A'
-
 # Função Principal
 def main():
-    st.title("RFV - Segmentação de Clientes")
-    st.write("""
-    **RFV (Recência, Frequência, Valor)** é uma técnica para segmentação de clientes com base no comportamento de compras.
+    # Título e descrição
+    st.title("RFV - Segmentação com Clusters")
+    st.markdown("""
+    **Recência, Frequência e Valor** são métricas fundamentais para segmentar clientes. 
+    Aqui, utilizamos essas métricas para criar clusters e identificar perfis de clientes.
     """)
-    st.markdown("---")
-    
-    # Upload do Arquivo
-    st.sidebar.header("📥 Envie seu arquivo de dados")
-    data_file = st.sidebar.file_uploader("Escolha um arquivo CSV ou Excel", type=['csv', 'xlsx'])
+
+    st.sidebar.header("📥 Upload de Dados")
+    data_file = st.sidebar.file_uploader("Envie um arquivo CSV", type=['csv'])
 
     if data_file:
-        try:
-            if data_file.name.endswith('.csv'):
-                df_compras = pd.read_csv(data_file, parse_dates=['DiaCompra'], infer_datetime_format=True)
-            else:
-                df_compras = pd.read_excel(data_file, parse_dates=['DiaCompra'], infer_datetime_format=True)
-        except Exception as e:
-            st.error(f"⚠️ Erro ao carregar o arquivo: {e}")
+        df = pd.read_csv(data_file)
+        st.subheader("📊 Dados Carregados")
+        st.dataframe(df.head())
+
+        # Verificação de colunas obrigatórias
+        colunas_necessarias = ['ID_cliente', 'Recencia', 'Frequencia', 'Valor']
+        if not all(col in df.columns for col in colunas_necessarias):
+            st.error(f"As colunas obrigatórias são: {', '.join(colunas_necessarias)}")
             st.stop()
 
-        colunas_necessarias = ['ID_cliente', 'DiaCompra', 'CodigoCompra', 'ValorTotal']
-        if not all(col in df_compras.columns for col in colunas_necessarias):
-            st.error(f"⚠️ O arquivo deve conter as colunas: {', '.join(colunas_necessarias)}")
-            st.stop()
-
-        st.subheader("📊 Prévia dos Dados Carregados")
-        st.dataframe(df_compras.head())
-
-        # Recência
-        dia_atual = df_compras['DiaCompra'].max()
-        df_recencia = df_compras.groupby('ID_cliente', as_index=False)['DiaCompra'].max()
-        df_recencia['Recencia'] = (dia_atual - df_recencia['DiaCompra']).dt.days
-        df_recencia.drop(columns=['DiaCompra'], inplace=True)
-
-        # Frequência
-        df_frequencia = df_compras.groupby('ID_cliente', as_index=False)['CodigoCompra'].nunique()
-        df_frequencia.columns = ['ID_cliente', 'Frequencia']
-
-        # Valor
-        df_valor = df_compras.groupby('ID_cliente', as_index=False)['ValorTotal'].sum()
-        df_valor.columns = ['ID_cliente', 'Valor']
-
-        # Merge das Componentes RFV
-        df_RFV = df_recencia.merge(df_frequencia, on='ID_cliente').merge(df_valor, on='ID_cliente')
-
-        # Quartis e Classificação
-        quartis = df_RFV.quantile(q=[0.25, 0.5, 0.75])
-        df_RFV['R_quartil'] = df_RFV['Recencia'].apply(recencia_class, args=('Recencia', quartis))
-        df_RFV['F_quartil'] = df_RFV['Frequencia'].apply(freq_val_class, args=('Frequencia', quartis))
-        df_RFV['V_quartil'] = df_RFV['Valor'].apply(freq_val_class, args=('Valor', quartis))
-        df_RFV['RFV_Score'] = df_RFV['R_quartil'] + df_RFV['F_quartil'] + df_RFV['V_quartil']
-
-        # Escolha da Quantidade de Clusters
+        # Seleção do número de clusters
         st.sidebar.header("🔢 Configuração de Clusterização")
         n_clusters = st.sidebar.slider(
             "Escolha a quantidade de clusters",
@@ -113,39 +62,42 @@ def main():
             step=1
         )
 
-        # Clusterização
+        # Escalando as variáveis RFV
         scaler = StandardScaler()
-        rfv_scaled = scaler.fit_transform(df_RFV[['Recencia', 'Frequencia', 'Valor']])
+        rfv_scaled = scaler.fit_transform(df[['Recencia', 'Frequencia', 'Valor']])
+
+        # Aplicação do KMeans
         kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-        df_RFV['Cluster'] = kmeans.fit_predict(rfv_scaled)
+        df['Cluster'] = kmeans.fit_predict(rfv_scaled)
 
-        # Descrição dos Clusters
-        st.subheader("📋 Tabela RFV com Clusterização")
-        st.dataframe(df_RFV.head())
+        # Silhouette Score
+        silhouette_avg = silhouette_score(rfv_scaled, df['Cluster'])
+        st.sidebar.metric(label="Silhouette Score", value=f"{silhouette_avg:.2f}")
 
-        st.write('### 📊 Resumo dos Clusters RFV')
-        cluster_summary = df_RFV.groupby('Cluster')[['Recencia', 'Frequencia', 'Valor']].mean()
-        st.dataframe(cluster_summary)
+        # Exibição dos clusters
+        st.subheader("📋 Dados Segmentados")
+        st.dataframe(df)
 
-        st.write('### 📈 Visualização dos Clusters RFV')
-        plt.figure(figsize=(10, 6))
-        for cluster in range(n_clusters):
-            plt.scatter(
-                rfv_scaled[df_RFV['Cluster'] == cluster, 0],
-                rfv_scaled[df_RFV['Cluster'] == cluster, 1],
-                label=f'Cluster {cluster}'
-            )
-        plt.xlabel('Recência (Normalizada)')
-        plt.ylabel('Frequência (Normalizada)')
-        plt.title(f'Clusters RFV ({n_clusters} grupos)')
-        plt.legend()
-        st.pyplot(plt)
+        # Gráfico de dispersão
+        st.subheader("📈 Visualização dos Clusters")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.scatterplot(
+            data=df,
+            x='Frequencia', 
+            y='Valor',
+            hue='Cluster', 
+            palette='viridis', 
+            ax=ax
+        )
+        ax.set_title("Clusters com base em Frequência e Valor")
+        st.pyplot(fig)
 
+        # Baixar resultados
         st.download_button(
-            label="🔽 Baixar Tabela RFV Segmentada",
-            data=to_excel(df_RFV),
-            file_name="clientes_segmentados_rfv.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            label="🔽 Baixar Tabela com Clusters (CSV)",
+            data=convert_df(df),
+            file_name="clientes_segmentados_rfv.csv",
+            mime="text/csv"
         )
 
 if __name__ == "__main__":
